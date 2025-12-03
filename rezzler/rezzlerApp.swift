@@ -79,6 +79,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setResolution(width: Int, height: Int) {
         let displayID = CGMainDisplayID()
         
+        // Save mouse position as relative coordinates (0.0 to 1.0)
+        let mousePos = NSEvent.mouseLocation
+        let screenFrame = NSScreen.main?.frame ?? .zero
+        let relativeX = mousePos.x / screenFrame.width
+        let relativeY = mousePos.y / screenFrame.height
+        
+        // Pre-calculate target position in new resolution
+        let newWidth = CGFloat(width)
+        let newHeight = CGFloat(height)
+        let targetX = relativeX * newWidth
+        let targetY = (1.0 - relativeY) * newHeight
+        let targetPoint = CGPoint(x: targetX, y: targetY)
+        
         // Get all modes including HiDPI
         let options = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
         guard let modes = CGDisplayCopyAllDisplayModes(displayID, options) as? [CGDisplayMode] else {
@@ -99,12 +112,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         
+        // Hide cursor and disconnect mouse tracking during transition
+        NSCursor.hide()
+        CGAssociateMouseAndMouseCursorPosition(0)
+        
         let config = UnsafeMutablePointer<CGDisplayConfigRef?>.allocate(capacity: 1)
         defer { config.deallocate() }
         
         var error = CGBeginDisplayConfiguration(config)
         guard error == .success else {
             print("Failed to begin display configuration: \(error)")
+            CGAssociateMouseAndMouseCursorPosition(1)
+            NSCursor.unhide()
             return
         }
         
@@ -112,12 +131,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard error == .success else {
             print("Failed to configure display mode: \(error)")
             CGCancelDisplayConfiguration(config.pointee)
+            CGAssociateMouseAndMouseCursorPosition(1)
+            NSCursor.unhide()
             return
         }
         
         error = CGCompleteDisplayConfiguration(config.pointee, .permanently)
         if error != .success {
             print("Failed to complete display configuration: \(error)")
+        }
+        
+        // Warp immediately, then again after display settles
+        CGWarpMouseCursorPosition(targetPoint)
+        
+        // Small delay to let display fully reconfigure, then finalize cursor position
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            CGWarpMouseCursorPosition(targetPoint)
+            CGAssociateMouseAndMouseCursorPosition(1)
+            NSCursor.unhide()
         }
     }
     
